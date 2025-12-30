@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, ImagePlus, Send, Loader2, CheckCircle, AlertCircle, Phone, Settings } from 'lucide-react';
+import { Users, ImagePlus, Send, Loader2, CheckCircle, AlertCircle, Phone } from 'lucide-react';
 import { toast } from 'sonner';
 import TelegramIcon from './TelegramIcon';
 import { supabase } from '@/integrations/supabase/client';
@@ -13,8 +13,6 @@ interface FormData {
   groupName: string;
   mobileNumbers: string;
   groupImage: File | null;
-  apiId: string;
-  apiHash: string;
   phoneNumber: string;
 }
 
@@ -23,8 +21,6 @@ const GroupCreatorForm: React.FC = () => {
     groupName: '',
     mobileNumbers: '',
     groupImage: null,
-    apiId: '',
-    apiHash: '',
     phoneNumber: '',
   });
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -71,11 +67,6 @@ const GroupCreatorForm: React.FC = () => {
       return;
     }
 
-    if (!formData.apiId.trim() || !formData.apiHash.trim()) {
-      toast.error('Please enter your Telegram API credentials');
-      return;
-    }
-
     if (!formData.phoneNumber.trim()) {
       toast.error('Please enter your phone number');
       return;
@@ -106,8 +97,6 @@ const GroupCreatorForm: React.FC = () => {
         body: {
           groupName: formData.groupName,
           mobileNumbers: numbers,
-          apiId: formData.apiId,
-          apiHash: formData.apiHash,
           phoneNumber: formData.phoneNumber,
           groupImageBase64,
         },
@@ -124,13 +113,11 @@ const GroupCreatorForm: React.FC = () => {
       setStatus('success');
       toast.success(`Group "${formData.groupName}" created with ${numbers.length} members!`);
       
-      // Reset form (keep credentials)
+      // Reset form (keep phone number)
       setFormData({
         groupName: '',
         mobileNumbers: '',
         groupImage: null,
-        apiId: formData.apiId,
-        apiHash: formData.apiHash,
         phoneNumber: formData.phoneNumber,
       });
       setImagePreview(null);
@@ -149,68 +136,8 @@ const GroupCreatorForm: React.FC = () => {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* API Credentials Card */}
-      <Card className="glass border-border/50 animate-fade-in" style={{ animationDelay: '0.1s' }}>
-        <CardHeader className="pb-4">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <Settings className="w-5 h-5 text-primary" />
-            Telegram API Credentials
-          </CardTitle>
-          <CardDescription>
-            Enter your Telegram API credentials from my.telegram.org
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="apiId" className="text-sm font-medium text-foreground">
-                API ID
-              </Label>
-              <Input
-                id="apiId"
-                name="apiId"
-                type="text"
-                placeholder="Enter your API ID"
-                value={formData.apiId}
-                onChange={handleInputChange}
-                className="bg-input border-border/50 focus:border-primary transition-colors"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="apiHash" className="text-sm font-medium text-foreground">
-                API Hash
-              </Label>
-              <Input
-                id="apiHash"
-                name="apiHash"
-                type="password"
-                placeholder="Enter your API Hash"
-                value={formData.apiHash}
-                onChange={handleInputChange}
-                className="bg-input border-border/50 focus:border-primary transition-colors"
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="phoneNumber" className="text-sm font-medium text-foreground">
-              <Phone className="w-4 h-4 inline mr-2" />
-              Your Phone Number (with country code)
-            </Label>
-            <Input
-              id="phoneNumber"
-              name="phoneNumber"
-              type="tel"
-              placeholder="+91XXXXXXXXXX"
-              value={formData.phoneNumber}
-              onChange={handleInputChange}
-              className="bg-input border-border/50 focus:border-primary transition-colors"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Group Details Card */}
-      <Card className="glass border-border/50 animate-fade-in" style={{ animationDelay: '0.2s' }}>
+      <Card className="glass border-border/50 animate-fade-in" style={{ animationDelay: '0.1s' }}>
         <CardHeader className="pb-4">
           <CardTitle className="flex items-center gap-2 text-lg">
             <TelegramIcon className="w-5 h-5 text-primary" />
@@ -269,8 +196,32 @@ const GroupCreatorForm: React.FC = () => {
         </CardContent>
       </Card>
 
+      {/* Your Phone Number Card */}
+      <Card className="glass border-border/50 animate-fade-in" style={{ animationDelay: '0.15s' }}>
+        <CardHeader className="pb-4">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Phone className="w-5 h-5 text-primary" />
+            Your Phone Number
+          </CardTitle>
+          <CardDescription>
+            Enter your Telegram registered phone number with country code
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Input
+            id="phoneNumber"
+            name="phoneNumber"
+            type="tel"
+            placeholder="+91XXXXXXXXXX"
+            value={formData.phoneNumber}
+            onChange={handleInputChange}
+            className="bg-input border-border/50 focus:border-primary transition-colors"
+          />
+        </CardContent>
+      </Card>
+
       {/* Members Card */}
-      <Card className="glass border-border/50 animate-fade-in" style={{ animationDelay: '0.3s' }}>
+      <Card className="glass border-border/50 animate-fade-in" style={{ animationDelay: '0.2s' }}>
         <CardHeader className="pb-4">
           <CardTitle className="flex items-center gap-2 text-lg">
             <Users className="w-5 h-5 text-primary" />
@@ -324,7 +275,7 @@ const GroupCreatorForm: React.FC = () => {
         variant="telegram"
         size="xl"
         className="w-full animate-fade-in"
-        style={{ animationDelay: '0.4s' }}
+        style={{ animationDelay: '0.25s' }}
         disabled={isLoading}
       >
         {isLoading ? (
