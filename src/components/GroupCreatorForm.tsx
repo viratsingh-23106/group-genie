@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Users, ImagePlus, Send, Loader2, CheckCircle, AlertCircle, Phone, Settings } from 'lucide-react';
 import { toast } from 'sonner';
 import TelegramIcon from './TelegramIcon';
+import { supabase } from '@/integrations/supabase/client';
 
 interface FormData {
   groupName: string;
@@ -48,6 +49,15 @@ const GroupCreatorForm: React.FC = () => {
     }
   };
 
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = error => reject(error);
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -85,14 +95,36 @@ const GroupCreatorForm: React.FC = () => {
         throw new Error('No valid mobile numbers found');
       }
 
-      // TODO: Call edge function to create group
-      // For now, simulate API call
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Convert image to base64 if provided
+      let groupImageBase64: string | undefined;
+      if (formData.groupImage) {
+        groupImageBase64 = await fileToBase64(formData.groupImage);
+      }
+
+      // Call edge function
+      const { data, error } = await supabase.functions.invoke('create-telegram-group', {
+        body: {
+          groupName: formData.groupName,
+          mobileNumbers: numbers,
+          apiId: formData.apiId,
+          apiHash: formData.apiHash,
+          phoneNumber: formData.phoneNumber,
+          groupImageBase64,
+        },
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to create group');
+      }
       
       setStatus('success');
       toast.success(`Group "${formData.groupName}" created with ${numbers.length} members!`);
       
-      // Reset form
+      // Reset form (keep credentials)
       setFormData({
         groupName: '',
         mobileNumbers: '',
