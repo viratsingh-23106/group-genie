@@ -1,9 +1,5 @@
 /// <reference types="https://esm.sh/@supabase/functions-js/src/edge-runtime.d.ts" />
 
-// @ts-nocheck - GramJS types are complex, using runtime validation
-import { Api, TelegramClient } from "https://esm.sh/telegram@2.22.2";
-import { StringSession } from "https://esm.sh/telegram@2.22.2/sessions";
-
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -31,14 +27,22 @@ interface CreateGroupRequest {
 
 type RequestBody = SendCodeRequest | VerifyCodeRequest | CreateGroupRequest;
 
+// MTProto requires complex cryptographic operations that are not fully
+// supported in edge function environments. For production Telegram group
+// creation, you need one of these alternatives:
+// 
+// 1. Use a dedicated Node.js server with GramJS
+// 2. Use Telegram Bot API (limited - bots can't create groups)
+// 3. Use a hosted MTProto service/proxy
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const apiId = parseInt(Deno.env.get('TELEGRAM_API_ID') || '0');
-    const apiHash = Deno.env.get('TELEGRAM_API_HASH') || '';
+    const apiId = Deno.env.get('TELEGRAM_API_ID');
+    const apiHash = Deno.env.get('TELEGRAM_API_HASH');
 
     if (!apiId || !apiHash) {
       return new Response(
@@ -52,153 +56,23 @@ Deno.serve(async (req) => {
 
     const body: RequestBody = await req.json();
     console.log('Request action:', body.action);
+    console.log('API ID configured:', !!apiId);
+    console.log('API Hash configured:', !!apiHash);
 
-    // Step 1: Send verification code
+    // Due to MTProto limitations in edge functions, we need to inform the user
+    // about the technical constraints
+    
     if (body.action === 'send_code') {
       const { phoneNumber } = body;
-      console.log('Sending code to:', phoneNumber);
-
-      const stringSession = new StringSession('');
-      const client = new TelegramClient(stringSession, apiId, apiHash, {
-        connectionRetries: 5,
-      });
-
-      await client.connect();
-
-      const result = await client.invoke(
-        new Api.auth.SendCode({
-          phoneNumber: phoneNumber,
-          apiId: apiId,
-          apiHash: apiHash,
-          settings: new Api.CodeSettings({
-            allowFlashcall: false,
-            currentNumber: true,
-            allowAppHash: true,
-          }),
-        })
-      );
-
-      console.log('Code sent successfully');
-      await client.disconnect();
-
+      console.log('Phone number received:', phoneNumber);
+      
       return new Response(
         JSON.stringify({ 
-          success: true, 
-          phoneCodeHash: (result as any).phoneCodeHash,
-          message: 'Verification code sent to your phone'
+          success: false, 
+          error: 'MTProto-based Telegram authentication requires a dedicated Node.js server. Edge functions do not support the full cryptographic operations needed. Consider deploying a separate backend service for GramJS.',
+          suggestion: 'For immediate group creation, use Telegram Desktop or Mobile app. For automated group creation, a dedicated Node.js server with GramJS is required.'
         }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Step 2: Verify code and get session
-    if (body.action === 'verify_code') {
-      const { phoneNumber, phoneCodeHash, code } = body;
-      console.log('Verifying code for:', phoneNumber);
-
-      const stringSession = new StringSession('');
-      const client = new TelegramClient(stringSession, apiId, apiHash, {
-        connectionRetries: 5,
-      });
-
-      await client.connect();
-
-      await client.invoke(
-        new Api.auth.SignIn({
-          phoneNumber: phoneNumber,
-          phoneCodeHash: phoneCodeHash,
-          phoneCode: code,
-        })
-      );
-
-      const sessionString = (client.session as any).save();
-      console.log('User authenticated successfully');
-      await client.disconnect();
-
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          sessionString: sessionString,
-          message: 'Authentication successful'
-        }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Step 3: Create group
-    if (body.action === 'create_group') {
-      const { sessionString, groupName, mobileNumbers } = body;
-      console.log('Creating group:', groupName, 'with', mobileNumbers.length, 'members');
-
-      const session = new StringSession(sessionString);
-      const client = new TelegramClient(session, apiId, apiHash, {
-        connectionRetries: 5,
-      });
-
-      await client.connect();
-
-      // Resolve users by phone numbers
-      const users: any[] = [];
-      for (const phone of mobileNumbers) {
-        try {
-          const result = await client.invoke(
-            new Api.contacts.ImportContacts({
-              contacts: [
-                new Api.InputPhoneContact({
-                  clientId: BigInt(Math.floor(Math.random() * 1000000)) as any,
-                  phone: phone,
-                  firstName: 'User',
-                  lastName: phone.slice(-4),
-                }),
-              ],
-            })
-          );
-
-          if (result.users && result.users.length > 0) {
-            const user = result.users[0] as any;
-            users.push(
-              new Api.InputUser({
-                userId: user.id,
-                accessHash: user.accessHash || BigInt(0) as any,
-              })
-            );
-            console.log('Found user for phone:', phone);
-          }
-        } catch (e) {
-          console.log('Could not find user for phone:', phone);
-        }
-      }
-
-      if (users.length === 0) {
-        await client.disconnect();
-        return new Response(
-          JSON.stringify({ 
-            success: false, 
-            error: 'No valid Telegram users found for the provided phone numbers'
-          }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Create the group
-      await client.invoke(
-        new Api.messages.CreateChat({
-          users: users,
-          title: groupName,
-        })
-      );
-
-      console.log('Group created successfully');
-      await client.disconnect();
-
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          message: `Group "${groupName}" created with ${users.length} members!`,
-          membersAdded: users.length,
-          totalRequested: mobileNumbers.length
-        }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
