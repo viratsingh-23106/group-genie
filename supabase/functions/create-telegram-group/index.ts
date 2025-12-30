@@ -8,8 +8,6 @@ const corsHeaders = {
 interface CreateGroupRequest {
   groupName: string;
   mobileNumbers: string[];
-  apiId: string;
-  apiHash: string;
   phoneNumber: string;
   groupImageBase64?: string;
 }
@@ -21,20 +19,37 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const body: CreateGroupRequest = await req.json();
-    const { groupName, mobileNumbers, apiId, apiHash, phoneNumber, groupImageBase64 } = body;
+    // Get API credentials from secrets
+    const apiId = Deno.env.get('TELEGRAM_API_ID');
+    const apiHash = Deno.env.get('TELEGRAM_API_HASH');
 
-    console.log(`Creating group "${groupName}" with ${mobileNumbers.length} members`);
-    console.log('Phone number for auth:', phoneNumber);
-    console.log('API ID provided:', !!apiId);
-    console.log('API Hash provided:', !!apiHash);
-
-    // Validate required fields
-    if (!groupName || !mobileNumbers || !apiId || !apiHash || !phoneNumber) {
+    if (!apiId || !apiHash) {
       return new Response(
         JSON.stringify({ 
           success: false, 
-          error: 'Missing required fields: groupName, mobileNumbers, apiId, apiHash, phoneNumber' 
+          error: 'Telegram API credentials not configured. Please add TELEGRAM_API_ID and TELEGRAM_API_HASH secrets.' 
+        }),
+        { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
+    }
+
+    const body: CreateGroupRequest = await req.json();
+    const { groupName, mobileNumbers, phoneNumber, groupImageBase64 } = body;
+
+    console.log(`Creating group "${groupName}" with ${mobileNumbers.length} members`);
+    console.log('Phone number for auth:', phoneNumber);
+    console.log('API ID configured:', !!apiId);
+    console.log('API Hash configured:', !!apiHash);
+
+    // Validate required fields
+    if (!groupName || !mobileNumbers || !phoneNumber) {
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: 'Missing required fields: groupName, mobileNumbers, phoneNumber' 
         }),
         { 
           status: 400, 
@@ -55,18 +70,7 @@ Deno.serve(async (req) => {
 
     // Note: GramJS requires a Node.js runtime with full crypto support
     // For production use, this would need a dedicated Node.js backend server
-    // The edge function can act as a proxy or use Telegram Bot API as alternative
-    
-    // For now, we'll document what would be needed:
-    // 1. GramJS client initialization with api_id and api_hash
-    // 2. User authentication with phone number (requires OTP flow)
-    // 3. Group creation with the authenticated session
-    // 4. Adding members by phone numbers
-    // 5. Setting group photo if provided
-    
-    // Alternative approach using Telegram Bot API (if user has a bot):
-    // Bot API has limitations - can't create groups or add members directly
-    // This requires MTProto (GramJS) which needs persistent session storage
+    // or session management with OTP flow
     
     return new Response(
       JSON.stringify({ 
@@ -76,7 +80,7 @@ Deno.serve(async (req) => {
           groupName,
           memberCount: mobileNumbers.length,
           hasImage: !!groupImageBase64,
-          note: 'GramJS integration requires session management. Please set up authentication flow.'
+          note: 'GramJS integration requires OTP authentication flow. Session management needed.'
         }
       }),
       { 
