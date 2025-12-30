@@ -4,11 +4,14 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, ImagePlus, Send, Loader2, CheckCircle, AlertCircle, Phone, KeyRound, MessageSquare, Settings, ExternalLink } from 'lucide-react';
+import { Users, ImagePlus, Send, Loader2, CheckCircle, Phone, KeyRound, LogOut, AlertCircle, MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import TelegramIcon from './TelegramIcon';
 
-type Step = 'setup' | 'phone' | 'otp' | 'group';
+// Hardcoded backend URL
+const BACKEND_URL = 'https://wonderful-strength-production-10ae.up.railway.app';
+
+type Step = 'phone' | 'otp' | 'group';
 
 interface FormData {
   groupName: string;
@@ -16,33 +19,43 @@ interface FormData {
   groupImage: File | null;
   phoneNumber: string;
   otpCode: string;
-  backendUrl: string;
+}
+
+interface SavedSession {
+  sessionString: string;
+  phoneNumber: string;
 }
 
 const GroupCreatorForm: React.FC = () => {
-  const [step, setStep] = useState<Step>('setup');
+  const [step, setStep] = useState<Step>('phone');
   const [formData, setFormData] = useState<FormData>({
     groupName: '',
     mobileNumbers: '',
     groupImage: null,
     phoneNumber: '',
     otpCode: '',
-    backendUrl: localStorage.getItem('telegram_backend_url') || '',
   });
   const [phoneCodeHash, setPhoneCodeHash] = useState<string>('');
   const [clientId, setClientId] = useState<string>('');
   const [sessionString, setSessionString] = useState<string>('');
+  const [savedPhone, setSavedPhone] = useState<string>('');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // Check if backend URL is already saved
-    const savedUrl = localStorage.getItem('telegram_backend_url');
-    if (savedUrl) {
-      setFormData(prev => ({ ...prev, backendUrl: savedUrl }));
-      setStep('phone');
+    // Check if session is already saved
+    const saved = localStorage.getItem('telegram_session');
+    if (saved) {
+      try {
+        const { sessionString: savedSession, phoneNumber } = JSON.parse(saved) as SavedSession;
+        setSessionString(savedSession);
+        setSavedPhone(phoneNumber);
+        setStep('group');
+      } catch {
+        localStorage.removeItem('telegram_session');
+      }
     }
   }, []);
 
@@ -63,14 +76,19 @@ const GroupCreatorForm: React.FC = () => {
     }
   };
 
-  const handleSaveBackendUrl = () => {
-    if (!formData.backendUrl.trim()) {
-      toast.error('Please enter your backend URL');
-      return;
-    }
-    localStorage.setItem('telegram_backend_url', formData.backendUrl.trim());
-    toast.success('Backend URL saved!');
+  const handleLogout = () => {
+    localStorage.removeItem('telegram_session');
+    setSessionString('');
+    setSavedPhone('');
     setStep('phone');
+    setFormData({
+      groupName: '',
+      mobileNumbers: '',
+      groupImage: null,
+      phoneNumber: '',
+      otpCode: '',
+    });
+    toast.success('Logged out successfully');
   };
 
   // Step 1: Send OTP
@@ -82,7 +100,7 @@ const GroupCreatorForm: React.FC = () => {
 
     setIsLoading(true);
     try {
-      const response = await fetch(`${formData.backendUrl}/api/send-code`, {
+      const response = await fetch(`${BACKEND_URL}/api/send-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phoneNumber: formData.phoneNumber.trim() }),
@@ -114,7 +132,7 @@ const GroupCreatorForm: React.FC = () => {
 
     setIsLoading(true);
     try {
-      const response = await fetch(`${formData.backendUrl}/api/verify-code`, {
+      const response = await fetch(`${BACKEND_URL}/api/verify-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -131,7 +149,15 @@ const GroupCreatorForm: React.FC = () => {
         throw new Error(data.error || 'Failed to verify OTP');
       }
 
+      // Save session to localStorage
+      const sessionData: SavedSession = {
+        sessionString: data.sessionString,
+        phoneNumber: formData.phoneNumber.trim(),
+      };
+      localStorage.setItem('telegram_session', JSON.stringify(sessionData));
+      
       setSessionString(data.sessionString);
+      setSavedPhone(formData.phoneNumber.trim());
       setStep('group');
       toast.success('Authenticated successfully!');
     } catch (error) {
@@ -166,7 +192,7 @@ const GroupCreatorForm: React.FC = () => {
         throw new Error('No valid mobile numbers found');
       }
 
-      const response = await fetch(`${formData.backendUrl}/api/create-group`, {
+      const response = await fetch(`${BACKEND_URL}/api/create-group`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -207,82 +233,35 @@ const GroupCreatorForm: React.FC = () => {
     .filter(n => n.length > 0);
 
   const getStepIndex = () => {
-    const steps = ['setup', 'phone', 'otp', 'group'];
+    const steps = ['phone', 'otp', 'group'];
     return steps.indexOf(step);
   };
 
   return (
     <div className="space-y-6">
       {/* Step Indicator */}
-      {step !== 'setup' && (
-        <div className="flex items-center justify-center gap-2 mb-8">
-          {[1, 2, 3].map((num, idx) => (
-            <React.Fragment key={num}>
-              <div 
-                className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold transition-all ${
-                  getStepIndex() > idx 
-                    ? 'bg-primary/20 text-primary'
-                    : getStepIndex() === idx + 1
-                      ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/30'
-                      : 'bg-secondary text-muted-foreground'
-                }`}
-              >
-                {num}
-              </div>
-              {idx < 2 && (
-                <div className={`w-12 h-1 rounded ${
-                  getStepIndex() > idx + 1 ? 'bg-primary' : 'bg-secondary'
-                }`} />
-              )}
-            </React.Fragment>
-          ))}
-        </div>
-      )}
-
-      {/* Step 0: Backend Setup */}
-      {step === 'setup' && (
-        <Card className="glass border-border/50 animate-fade-in">
-          <CardHeader className="pb-4">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Settings className="w-5 h-5 text-primary" />
-              Backend Server Setup
-            </CardTitle>
-            <CardDescription>
-              Enter your Node.js backend URL where GramJS is running
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="p-4 rounded-lg bg-primary/10 border border-primary/20 text-sm">
-              <p className="font-medium text-primary mb-2">📋 Quick Setup Guide:</p>
-              <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
-                <li>Download the <code className="bg-secondary px-1 rounded">nodejs-backend</code> folder from this project</li>
-                <li>Deploy to Railway, Render, or your own VPS</li>
-                <li>Set <code className="bg-secondary px-1 rounded">TELEGRAM_API_ID</code> and <code className="bg-secondary px-1 rounded">TELEGRAM_API_HASH</code> env variables</li>
-                <li>Paste your deployment URL below</li>
-              </ol>
-            </div>
-            
-            <Input
-              name="backendUrl"
-              type="url"
-              placeholder="https://your-backend.railway.app"
-              value={formData.backendUrl}
-              onChange={handleInputChange}
-              className="bg-input border-border/50 focus:border-primary transition-colors"
-            />
-            
-            <Button
-              onClick={handleSaveBackendUrl}
-              variant="telegram"
-              size="lg"
-              className="w-full"
+      <div className="flex items-center justify-center gap-2 mb-8">
+        {[1, 2, 3].map((num, idx) => (
+          <React.Fragment key={num}>
+            <div 
+              className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold transition-all ${
+                getStepIndex() > idx 
+                  ? 'bg-primary/20 text-primary'
+                  : getStepIndex() === idx
+                    ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/30'
+                    : 'bg-secondary text-muted-foreground'
+              }`}
             >
-              <ExternalLink className="w-5 h-5" />
-              Connect to Backend
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+              {num}
+            </div>
+            {idx < 2 && (
+              <div className={`w-12 h-1 rounded ${
+                getStepIndex() > idx ? 'bg-primary' : 'bg-secondary'
+              }`} />
+            )}
+          </React.Fragment>
+        ))}
+      </div>
 
       {/* Step 1: Phone Number */}
       {step === 'phone' && (
@@ -323,15 +302,6 @@ const GroupCreatorForm: React.FC = () => {
                   Send OTP
                 </>
               )}
-            </Button>
-            <Button
-              onClick={() => setStep('setup')}
-              variant="ghost"
-              size="sm"
-              className="w-full text-muted-foreground"
-            >
-              <Settings className="w-4 h-4 mr-2" />
-              Change Backend URL
             </Button>
           </CardContent>
         </Card>
@@ -393,10 +363,21 @@ const GroupCreatorForm: React.FC = () => {
       {/* Step 3: Create Group */}
       {step === 'group' && (
         <form onSubmit={(e) => { e.preventDefault(); handleCreateGroup(); }} className="space-y-6">
-          {/* Success Badge */}
-          <div className="flex items-center justify-center gap-2 text-sm text-primary bg-primary/10 px-4 py-2 rounded-full w-fit mx-auto">
-            <CheckCircle className="w-4 h-4" />
-            Logged in as {formData.phoneNumber}
+          {/* Success Badge with Logout */}
+          <div className="flex items-center justify-center gap-3">
+            <div className="flex items-center gap-2 text-sm text-primary bg-primary/10 px-4 py-2 rounded-full">
+              <CheckCircle className="w-4 h-4" />
+              Logged in as {savedPhone || formData.phoneNumber}
+            </div>
+            <Button
+              type="button"
+              onClick={handleLogout}
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-destructive"
+            >
+              <LogOut className="w-4 h-4" />
+            </Button>
           </div>
 
           {/* Group Details Card */}
