@@ -1,15 +1,14 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, ImagePlus, Send, Loader2, CheckCircle, AlertCircle, Phone, KeyRound, MessageSquare } from 'lucide-react';
+import { Users, ImagePlus, Send, Loader2, CheckCircle, AlertCircle, Phone, KeyRound, MessageSquare, Settings, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import TelegramIcon from './TelegramIcon';
-import { supabase } from '@/integrations/supabase/client';
 
-type Step = 'phone' | 'otp' | 'group';
+type Step = 'setup' | 'phone' | 'otp' | 'group';
 
 interface FormData {
   groupName: string;
@@ -17,23 +16,35 @@ interface FormData {
   groupImage: File | null;
   phoneNumber: string;
   otpCode: string;
+  backendUrl: string;
 }
 
 const GroupCreatorForm: React.FC = () => {
-  const [step, setStep] = useState<Step>('phone');
+  const [step, setStep] = useState<Step>('setup');
   const [formData, setFormData] = useState<FormData>({
     groupName: '',
     mobileNumbers: '',
     groupImage: null,
     phoneNumber: '',
     otpCode: '',
+    backendUrl: localStorage.getItem('telegram_backend_url') || '',
   });
   const [phoneCodeHash, setPhoneCodeHash] = useState<string>('');
+  const [clientId, setClientId] = useState<string>('');
   const [sessionString, setSessionString] = useState<string>('');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // Check if backend URL is already saved
+    const savedUrl = localStorage.getItem('telegram_backend_url');
+    if (savedUrl) {
+      setFormData(prev => ({ ...prev, backendUrl: savedUrl }));
+      setStep('phone');
+    }
+  }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -52,13 +63,14 @@ const GroupCreatorForm: React.FC = () => {
     }
   };
 
-  const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = error => reject(error);
-    });
+  const handleSaveBackendUrl = () => {
+    if (!formData.backendUrl.trim()) {
+      toast.error('Please enter your backend URL');
+      return;
+    }
+    localStorage.setItem('telegram_backend_url', formData.backendUrl.trim());
+    toast.success('Backend URL saved!');
+    setStep('phone');
   };
 
   // Step 1: Send OTP
@@ -70,17 +82,20 @@ const GroupCreatorForm: React.FC = () => {
 
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('create-telegram-group', {
-        body: {
-          action: 'send_code',
-          phoneNumber: formData.phoneNumber.trim(),
-        },
+      const response = await fetch(`${formData.backendUrl}/api/send-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber: formData.phoneNumber.trim() }),
       });
 
-      if (error) throw new Error(error.message);
-      if (!data.success) throw new Error(data.error);
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to send OTP');
+      }
 
       setPhoneCodeHash(data.phoneCodeHash);
+      setClientId(data.clientId);
       setStep('otp');
       toast.success('OTP sent to your Telegram!');
     } catch (error) {
@@ -99,17 +114,22 @@ const GroupCreatorForm: React.FC = () => {
 
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('create-telegram-group', {
-        body: {
-          action: 'verify_code',
+      const response = await fetch(`${formData.backendUrl}/api/verify-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           phoneNumber: formData.phoneNumber.trim(),
           phoneCodeHash: phoneCodeHash,
           code: formData.otpCode.trim(),
-        },
+          clientId: clientId,
+        }),
       });
 
-      if (error) throw new Error(error.message);
-      if (!data.success) throw new Error(data.error);
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to verify OTP');
+      }
 
       setSessionString(data.sessionString);
       setStep('group');
@@ -146,23 +166,21 @@ const GroupCreatorForm: React.FC = () => {
         throw new Error('No valid mobile numbers found');
       }
 
-      let groupImageBase64: string | undefined;
-      if (formData.groupImage) {
-        groupImageBase64 = await fileToBase64(formData.groupImage);
-      }
-
-      const { data, error } = await supabase.functions.invoke('create-telegram-group', {
-        body: {
-          action: 'create_group',
+      const response = await fetch(`${formData.backendUrl}/api/create-group`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           sessionString: sessionString,
           groupName: formData.groupName,
           mobileNumbers: numbers,
-          groupImageBase64,
-        },
+        }),
       });
 
-      if (error) throw new Error(error.message);
-      if (!data.success) throw new Error(data.error);
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to create group');
+      }
       
       setStatus('success');
       toast.success(data.message);
@@ -188,31 +206,83 @@ const GroupCreatorForm: React.FC = () => {
     .map(n => n.trim())
     .filter(n => n.length > 0);
 
+  const getStepIndex = () => {
+    const steps = ['setup', 'phone', 'otp', 'group'];
+    return steps.indexOf(step);
+  };
+
   return (
     <div className="space-y-6">
       {/* Step Indicator */}
-      <div className="flex items-center justify-center gap-2 mb-8">
-        {['phone', 'otp', 'group'].map((s, idx) => (
-          <React.Fragment key={s}>
-            <div 
-              className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold transition-all ${
-                step === s 
-                  ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/30' 
-                  : idx < ['phone', 'otp', 'group'].indexOf(step)
+      {step !== 'setup' && (
+        <div className="flex items-center justify-center gap-2 mb-8">
+          {[1, 2, 3].map((num, idx) => (
+            <React.Fragment key={num}>
+              <div 
+                className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold transition-all ${
+                  getStepIndex() > idx 
                     ? 'bg-primary/20 text-primary'
-                    : 'bg-secondary text-muted-foreground'
-              }`}
-            >
-              {idx + 1}
+                    : getStepIndex() === idx + 1
+                      ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/30'
+                      : 'bg-secondary text-muted-foreground'
+                }`}
+              >
+                {num}
+              </div>
+              {idx < 2 && (
+                <div className={`w-12 h-1 rounded ${
+                  getStepIndex() > idx + 1 ? 'bg-primary' : 'bg-secondary'
+                }`} />
+              )}
+            </React.Fragment>
+          ))}
+        </div>
+      )}
+
+      {/* Step 0: Backend Setup */}
+      {step === 'setup' && (
+        <Card className="glass border-border/50 animate-fade-in">
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Settings className="w-5 h-5 text-primary" />
+              Backend Server Setup
+            </CardTitle>
+            <CardDescription>
+              Enter your Node.js backend URL where GramJS is running
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="p-4 rounded-lg bg-primary/10 border border-primary/20 text-sm">
+              <p className="font-medium text-primary mb-2">📋 Quick Setup Guide:</p>
+              <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                <li>Download the <code className="bg-secondary px-1 rounded">nodejs-backend</code> folder from this project</li>
+                <li>Deploy to Railway, Render, or your own VPS</li>
+                <li>Set <code className="bg-secondary px-1 rounded">TELEGRAM_API_ID</code> and <code className="bg-secondary px-1 rounded">TELEGRAM_API_HASH</code> env variables</li>
+                <li>Paste your deployment URL below</li>
+              </ol>
             </div>
-            {idx < 2 && (
-              <div className={`w-12 h-1 rounded ${
-                idx < ['phone', 'otp', 'group'].indexOf(step) ? 'bg-primary' : 'bg-secondary'
-              }`} />
-            )}
-          </React.Fragment>
-        ))}
-      </div>
+            
+            <Input
+              name="backendUrl"
+              type="url"
+              placeholder="https://your-backend.railway.app"
+              value={formData.backendUrl}
+              onChange={handleInputChange}
+              className="bg-input border-border/50 focus:border-primary transition-colors"
+            />
+            
+            <Button
+              onClick={handleSaveBackendUrl}
+              variant="telegram"
+              size="lg"
+              className="w-full"
+            >
+              <ExternalLink className="w-5 h-5" />
+              Connect to Backend
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Step 1: Phone Number */}
       {step === 'phone' && (
@@ -253,6 +323,15 @@ const GroupCreatorForm: React.FC = () => {
                   Send OTP
                 </>
               )}
+            </Button>
+            <Button
+              onClick={() => setStep('setup')}
+              variant="ghost"
+              size="sm"
+              className="w-full text-muted-foreground"
+            >
+              <Settings className="w-4 h-4 mr-2" />
+              Change Backend URL
             </Button>
           </CardContent>
         </Card>
